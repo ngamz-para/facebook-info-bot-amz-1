@@ -105,10 +105,142 @@ class FacebookScraperImproved:
             return self._error_response(f"Lỗi kết nối: {error_msg}")
         except Exception as e:
             return self._error_response(f"Lỗi xử lý: {str(e)}")
+
+    def _extract_from_meta(self, soup, username, url):
+        """Trích xuất thông tin từ thẻ meta (nhanh và ổn định nhất)"""
+        info = {
+            'username': username,
+            'url': url,
+            'name': 'Không xác định',
+            'avatar_url': '',
+            'uid': 'Không xác định',
+            'bio': '',
+            'verified': 'Không'  # Mặc định là Không
+        }
+        
+        # Tìm tên từ og:title
+        meta_title = soup.find('meta', property='og:title')
+        if meta_title:
+            full_title = meta_title.get('content', '')
+            # Tách tên thật từ title (loại bỏ " | Facebook")
+            info['name'] = full_title.split('|')[0].strip()
+        
+        # Tìm ảnh đại diện từ og:image
+        meta_image = soup.find('meta', property='og:image')
+        if meta_image:
+            info['avatar_url'] = meta_image.get('content', '')
+        
+        # Tìm UID từ nhiều nguồn khác nhau trong HTML
+        uid = self._find_uid_in_html(str(soup))
+        if uid:
+            info['uid'] = uid
+        
+        # Tìm mô tả bio
+        meta_desc = soup.find('meta', property='og:description')
+        if meta_desc:
+            info['bio'] = meta_desc.get('content', '')[:150]
+        
+        return info
     
-    # CÁC PHƯƠNG THỨC _extract_from_meta, _find_uid_in_html, _extract_detailed_info, _estimate_join_date, _error_response
-    # VẪN GIỮ NGUYÊN NHƯ CODE CŨ CỦA BẠN, TÔI SẼ KHÔNG SAO CHÉP LẠI Ở ĐÂY ĐỂ TRÁNH DÀI DÒNG.
-    # Bạn chỉ cần giữ nguyên các phương thức này từ file cũ của bạn.
+    def _find_uid_in_html(self, html):
+        """Tìm UID bằng nhiều regex pattern (tăng độ chính xác)"""
+        patterns = [
+            r'"userID":"(\d+)"',           # Pattern cũ
+            r'"actor_id":(\d+)',           # Pattern mới
+            r'profile_id=(\d+)',           # Trong URL
+            r'/(\d+)/?$',                  # UID trong đường dẫn
+            r'content="fb://profile/(\d+)"' # Trong meta
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, html)
+            if match:
+                return match.group(1)
+        return None
+    
+    def _extract_detailed_info(self, soup, info):
+        """Trích xuất thông tin chi tiết hơn từ HTML"""
+        
+        # CẢI TIẾN: Tìm tick xanh (verified) bằng nhiều cách
+        verified = False
+        
+        # Cách 1: Tìm biểu tượng tick xanh qua SVG path
+        svg_tags = soup.find_all('svg')
+        for svg in svg_tags:
+            if svg.find('path', {'d': True}):
+                # Path data của tick xanh thường có chữ "M18" hoặc phức tạp
+                path_data = str(svg.find('path'))
+                if 'M18' in path_data and ('9.5' in path_data or '12' in path_data):
+                    verified = True
+                    break
+        
+        # Cách 2: Tìm trong alt text của ảnh
+        img_tags = soup.find_all('img', alt=True)
+        for img in img_tags:
+            alt_text = img.get('alt', '').lower()
+            if 'verified' in alt_text or 'đã xác minh' in alt_text:
+                verified = True
+                break
+        
+        info['verified'] = 'Có ✓' if verified else 'Không ✗'
+        
+        # Tìm số người theo dõi (followers)
+        followers_text = 'Không công khai'
+        
+        # Tìm các span có text liên quan đến followers
+        all_text = soup.get_text()
+        followers_patterns = [
+            r'(\d+[\.,]?\d*[KkM]?)\s*(người theo dõi|followers)',
+            r'(\d+[\.,]?\d*[KkM]?)\s*(lượt theo dõi)',
+            r'Followers:\s*(\d+[\.,]?\d*[KkM]?)'
+        ]
+        
+        for pattern in followers_patterns:
+            match = re.search(pattern, all_text, re.IGNORECASE)
+            if match:
+                followers_text = f"{match.group(1)} người theo dõi"
+                break
+        
+        info['followers'] = followers_text
+    
+    def _estimate_join_date(self, uid):
+        """
+        ƯỚC LƯỢNG ngày tạo tài khoản dựa trên UID.
+        Đây là phương pháp gần đúng dựa trên quan sát.
+        """
+        try:
+            uid_num = int(uid)
+            
+            # Facebook UID tăng dần theo thời gian
+            # UID 4 (Mark Zuckerberg) ~ 2004
+            # UID 100000xxx ~ 2008
+            # Đây là công thức ƯỚC LƯỢNG, không chính xác 100%
+            
+            base_year = 2004
+            base_uid = 4
+            
+            if uid_num <= base_uid:
+                return "Khoảng 2004"
+            
+            # Tính năm ước lượng (mỗi 50 triệu UID ~ 1 năm)
+            years_since_base = (uid_num - base_uid) / 50000000
+            estimated_year = base_year + int(years_since_base)
+            
+            # Giới hạn năm trong khoảng hợp lý
+            estimated_year = max(2004, min(estimated_year, datetime.now().year))
+            
+            return f"Khoảng năm {estimated_year}"
+            
+        except:
+            return "Không thể ước lượng"
+    
+    def _error_response(self, message):
+        """Tạo response thông báo lỗi"""
+        return {
+            'success': False,
+            'error': message,
+            'timestamp': datetime.now().strftime("%d/%m/Y %H:%M:%S")
+        }
 
 # Hàm wrapper để bot.py gọi
 def get_facebook_info_improved(username):
