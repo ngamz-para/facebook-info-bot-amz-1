@@ -1,203 +1,199 @@
 import time
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from bs4 import BeautifulSoup
 import re
+from bs4 import BeautifulSoup
+from datetime import datetime
 
-class FacebookScraper:
-    def __init__(self, headless=True):
-        """Khởi tạo trình duyệt Chrome với cấu hình headless"""
-        self.options = Options()
-        
-        if headless:
-            self.options.add_argument("--headless=new")
-        
-        # Các cấu hình quan trọng cho server
-        self.options.add_argument("--no-sandbox")
-        self.options.add_argument("--disable-dev-shm-usage")
-        self.options.add_argument("--disable-gpu")
-        self.options.add_argument("--window-size=1920,1080")
-        
-        # Giả mạo user-agent
-        self.options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        
-        # Tắt thông báo Chrome
-        self.options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        
-        self.driver = None
-        self.wait_timeout = 30
+class FacebookScraperImproved:
+    def __init__(self):
+        # Headers giả mạo trình duyệt thật
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Connection': 'keep-alive',
+        }
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
     
-    def start_browser(self):
-        """Khởi động trình duyệt"""
-        try:
-            self.driver = webdriver.Chrome(options=self.options)
-            return True
-        except WebDriverException as e:
-            print(f"❌ Lỗi khởi động Chrome: {e}")
-            return False
-    
-    def scrape_basic_info(self, username):
+    def scrape_fast(self, username):
         """
-        Thu thập thông tin CƠ BẢN từ trang cá nhân Facebook
-        CHỈ HOẠT ĐỘNG VỚI TRANG CÔNG KHAI
+        Phiên bản cải tiến: NHANH HƠN và chính xác hơn.
+        Dùng requests + BeautifulSoup thay vì Selenium khi có thể.
         """
-        if not self.driver:
-            if not self.start_browser():
-                return self._create_error_response("Không thể khởi động trình duyệt")
+        url = f"https://www.facebook.com/{username}"
+        print(f"🚀 Đang thu thập nhanh: {username}")
         
         try:
-            # Mở trang Facebook (KHÔNG đăng nhập)
-            url = f"https://www.facebook.com/{username}"
-            print(f"🔍 Đang truy cập: {url}")
+            # 1. LẤY HTML BẰNG REQUESTS (SIÊU NHANH)
+            start_time = time.time()
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            html_content = response.text
             
-            self.driver.get(url)
+            get_time = time.time() - start_time
+            print(f"⏱️  Tải HTML xong trong {get_time:.2f}s")
             
-            # Chờ trang tải - QUAN TRỌNG: Facebook có nhiều redirect
-            time.sleep(5)
+            # 2. PHÂN TÍCH VỚI BEAUTIFULSOUP
+            soup = BeautifulSoup(html_content, 'lxml')
             
-            # Kiểm tra xem có phải trang lỗi không
-            if "trang này không khả dụng" in self.driver.page_source.lower():
-                return self._create_error_response("Trang không tồn tại hoặc không công khai")
+            # 3. LẤY THÔNG TIN CƠ BẢN TỪ META TAGS
+            info = self._extract_from_meta(soup, username, url)
             
-            # Lấy HTML để phân tích
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'lxml')
+            # 4. TÌM THÔNG TIN CHI TIẾT HƠN TRONG HTML
+            self._extract_detailed_info(soup, info)
             
-            # ========== TRÍCH XUẤT THÔNG TIN ==========
-            info = {
-                'success': True,
-                'username': username,
-                'url': url
-            }
+            # 5. ƯỚC LƯỢNG NGÀY TẠO TÀI KHOẢN (Nếu có UID)
+            if info.get('uid') and info['uid'].isdigit():
+                info['estimated_join_date'] = self._estimate_join_date(info['uid'])
             
-            # 1. Tìm tên (thẻ meta og:title)
-            meta_title = soup.find('meta', property='og:title')
-            if meta_title:
-                info['name'] = meta_title.get('content', '').split('|')[0].strip()
-            else:
-                # Fallback: tìm trong title
-                title_tag = soup.find('title')
-                if title_tag:
-                    info['name'] = title_tag.text.split('|')[0].strip()
-            
-            # 2. Tìm ảnh đại diện (meta og:image)
-            meta_image = soup.find('meta', property='og:image')
-            if meta_image:
-                info['avatar_url'] = meta_image.get('content', '')
-            
-            # 3. Tìm UID từ source (nếu có)
-            uid_match = re.search(r'"userID":"(\d+)"', page_source)
-            if uid_match:
-                info['uid'] = uid_match.group(1)
-            else:
-                info['uid'] = 'Không xác định'
-            
-            # 4. Tìm mô tả (meta og:description)
-            meta_desc = soup.find('meta', property='og:description')
-            if meta_desc:
-                desc = meta_desc.get('content', '')
-                info['bio'] = desc[:200] + '...' if len(desc) > 200 else desc
-            
-            # 5. Tìm thông tin cơ bản từ các div
-            # LƯU Ý: Cấu trúc HTML của Facebook THAY ĐỔI THƯỜNG XUYÊN
-            # Bạn cần tự cập nhật các selector này
-            
-            # Ví dụ tìm số người theo dõi (nếu là trang công khai)
-            followers_text = ''
-            for span in soup.find_all('span'):
-                text = span.get_text()
-                if 'người theo dõi' in text.lower() or 'followers' in text.lower():
-                    followers_text = text
-                    break
-            
-            info['followers'] = followers_text if followers_text else 'Không công khai'
-            
-            # 6. Xác định verified (tick xanh)
-            verified = soup.find('i', {'aria-label': True})
-            info['verified'] = 'Có' if verified and 'đã xác minh' in verified.get('aria-label', '').lower() else 'Không'
-            
-            # Thêm timestamp
-            info['scraped_at'] = time.strftime("%d/%m/%Y %H:%M:%S")
-            
+            info['scraped_in'] = f"{get_time:.2f}s"
+            info['success'] = True
             return info
             
-        except TimeoutException:
-            return self._create_error_response("Timeout khi tải trang")
+        except requests.exceptions.Timeout:
+            return self._error_response("Timeout: Facebook phản hồi quá chậm")
+        except requests.exceptions.RequestException as e:
+            return self._error_response(f"Lỗi kết nối: {str(e)}")
         except Exception as e:
-            print(f"❌ Lỗi không xác định: {e}")
-            return self._create_error_response(f"Lỗi: {str(e)}")
+            return self._error_response(f"Lỗi xử lý: {str(e)}")
     
-    def scrape_via_graph_api(self, user_id):
-        """
-        Thử lấy thông tin qua Facebook Graph API
-        YÊU CẦU: Access Token và quyền truy cập
-        """
-        # BẠN CẦN TỰ TẠO APP TRÊN DEVELOPERS.FACEBOOK.COM
-        access_token = os.environ.get('FB_ACCESS_TOKEN', '')
+    def _extract_from_meta(self, soup, username, url):
+        """Trích xuất thông tin từ thẻ meta (nhanh và ổn định nhất)"""
+        info = {
+            'username': username,
+            'url': url,
+            'name': 'Không xác định',
+            'avatar_url': '',
+            'uid': 'Không xác định',
+            'bio': '',
+            'verified': 'Không'  # Mặc định là Không
+        }
         
-        if not access_token:
-            return {'error': 'Chưa cấu hình Facebook Access Token'}
+        # Tìm tên từ og:title
+        meta_title = soup.find('meta', property='og:title')
+        if meta_title:
+            full_title = meta_title.get('content', '')
+            # Tách tên thật từ title (loại bỏ " | Facebook")
+            info['name'] = full_title.split('|')[0].strip()
         
+        # Tìm ảnh đại diện từ og:image
+        meta_image = soup.find('meta', property='og:image')
+        if meta_image:
+            info['avatar_url'] = meta_image.get('content', '')
+        
+        # Tìm UID từ nhiều nguồn khác nhau trong HTML
+        uid = self._find_uid_in_html(str(soup))
+        if uid:
+            info['uid'] = uid
+        
+        # Tìm mô tả bio
+        meta_desc = soup.find('meta', property='og:description')
+        if meta_desc:
+            info['bio'] = meta_desc.get('content', '')[:150]
+        
+        return info
+    
+    def _find_uid_in_html(self, html):
+        """Tìm UID bằng nhiều regex pattern (tăng độ chính xác)"""
+        patterns = [
+            r'"userID":"(\d+)"',           # Pattern cũ
+            r'"actor_id":(\d+)',           # Pattern mới
+            r'profile_id=(\d+)',           # Trong URL
+            r'/(\d+)/?$',                  # UID trong đường dẫn
+            r'content="fb://profile/(\d+)"' # Trong meta
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, html)
+            if match:
+                return match.group(1)
+        return None
+    
+    def _extract_detailed_info(self, soup, info):
+        """Trích xuất thông tin chi tiết hơn từ HTML"""
+        
+        # CẢI TIẾN: Tìm tick xanh (verified) bằng nhiều cách
+        verified = False
+        
+        # Cách 1: Tìm biểu tượng tick xanh qua SVG path
+        svg_tags = soup.find_all('svg')
+        for svg in svg_tags:
+            if svg.find('path', {'d': True}):
+                # Path data của tick xanh thường có chữ "M18" hoặc phức tạp
+                path_data = str(svg.find('path'))
+                if 'M18' in path_data and ('9.5' in path_data or '12' in path_data):
+                    verified = True
+                    break
+        
+        # Cách 2: Tìm trong alt text của ảnh
+        img_tags = soup.find_all('img', alt=True)
+        for img in img_tags:
+            alt_text = img.get('alt', '').lower()
+            if 'verified' in alt_text or 'đã xác minh' in alt_text:
+                verified = True
+                break
+        
+        info['verified'] = 'Có ✓' if verified else 'Không ✗'
+        
+        # Tìm số người theo dõi (followers)
+        followers_text = 'Không công khai'
+        
+        # Tìm các span có text liên quan đến followers
+        all_text = soup.get_text()
+        followers_patterns = [
+            r'(\d+[\.,]?\d*[KkM]?)\s*(người theo dõi|followers)',
+            r'(\d+[\.,]?\d*[KkM]?)\s*(lượt theo dõi)',
+            r'Followers:\s*(\d+[\.,]?\d*[KkM]?)'
+        ]
+        
+        for pattern in followers_patterns:
+            match = re.search(pattern, all_text, re.IGNORECASE)
+            if match:
+                followers_text = f"{match.group(1)} người theo dõi"
+                break
+        
+        info['followers'] = followers_text
+    
+    def _estimate_join_date(self, uid):
+        """
+        ƯỚC LƯỢNG ngày tạo tài khoản dựa trên UID.
+        Đây là phương pháp gần đúng dựa trên quan sát.
+        """
         try:
-            url = f"https://graph.facebook.com/v18.0/{user_id}"
-            params = {
-                'fields': 'id,name,first_name,last_name',
-                'access_token': access_token
-            }
+            uid_num = int(uid)
             
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
+            # Facebook UID tăng dần theo thời gian
+            # UID 4 (Mark Zuckerberg) ~ 2004
+            # UID 100000xxx ~ 2008
+            # Đây là công thức ƯỚC LƯỢNG, không chính xác 100%
             
-            if 'error' in data:
-                return {'error': data['error']['message']}
+            base_year = 2004
+            base_uid = 4
             
-            return {
-                'success': True,
-                'source': 'graph_api',
-                'data': data
-            }
+            if uid_num <= base_uid:
+                return "Khoảng 2004"
             
-        except Exception as e:
-            return {'error': f"API Error: {str(e)}"}
+            # Tính năm ước lượng (mỗi 50 triệu UID ~ 1 năm)
+            years_since_base = (uid_num - base_uid) / 50000000
+            estimated_year = base_year + int(years_since_base)
+            
+            # Giới hạn năm trong khoảng hợp lý
+            estimated_year = max(2004, min(estimated_year, datetime.now().year))
+            
+            return f"Khoảng năm {estimated_year}"
+            
+        except:
+            return "Không thể ước lượng"
     
-    def _create_error_response(self, message):
-        """Tạo response thông báo lỗi"""
+    def _error_response(self, message):
         return {
             'success': False,
             'error': message,
-            'timestamp': time.strftime("%d/%m/%Y %H:%M:%S")
+            'timestamp': datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         }
-    
-    def close(self):
-        """Đóng trình duyệt"""
-        if self.driver:
-            self.driver.quit()
-            self.driver = None
 
-# Hàm wrapper đơn giản để bot.py gọi
-def get_facebook_info_real(input_data):
-    """
-    Hàm chính để lấy thông tin Facebook
-    Có thể nhận username hoặc UID
-    """
-    scraper = FacebookScraper(headless=True)
-    
-    try:
-        # Xác định loại input
-        if input_data.isdigit():
-            # Nếu là số, thử dùng Graph API trước
-            result = scraper.scrape_via_graph_api(input_data)
-            if result.get('success'):
-                return result
-        
-        # Mặc định dùng web scraping với username
-        result = scraper.scrape_basic_info(input_data)
-        return result
-        
-    finally:
-        scraper.close()
+# Hàm wrapper để bot.py gọi
+def get_facebook_info_improved(username):
+    scraper = FacebookScraperImproved()
+    return scraper.scrape_fast(username)
