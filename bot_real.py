@@ -67,8 +67,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
             return
         
-        # ========== ĐỊNH DẠNG KẾT QUẢ THẬT ==========
-        result_text = f"""
+      # ========== ĐỊNH DẠNG KẾT QUẢ CẢI TIẾN ==========
+result_text = f"""
 📋 *THÔNG TIN FACEBOOK - THẬT*
 ━━━━━━━━━━━━━━━━━━━━
 👤 **Tên:** {result.get('name', 'Không xác định')}
@@ -81,13 +81,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📍 **Thông tin khác:**
 • 📝 {result.get('bio', 'Không có mô tả')}
+• 📅 **Tham gia:** {result.get('estimated_join_date', 'Không rõ')}
 • 🔗 {result.get('url', 'N/A')}
-• 🕒 Thu thập lúc: {result.get('scraped_at', 'N/A')}
+• ⚡ Thu thập trong: {result.get('scraped_in', 'N/A')}
+• 🕒 Lúc: {result.get('timestamp', 'N/A')}
 
 ━━━━━━━━━━━━━━━━━━━━
-⚠️ *Thông tin chỉ từ dữ liệu CÔNG KHAI*
-📌 Facebook có thể chặn truy cập tự động
-        """
+⚠️ *Thông tin từ dữ liệu CÔNG KHAI*
+📌 Ngày tham gia là ƯỚC LƯỢNG dựa trên UID
+"""
         
         # Gửi ảnh đại diện nếu có
         avatar_url = result.get('avatar_url')
@@ -142,4 +144,5 @@ def main():
         logger.error(f"Lỗi khởi động: {e}")
 
 if __name__ == '__main__':
+
     main()
