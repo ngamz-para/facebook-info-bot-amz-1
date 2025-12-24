@@ -1,8 +1,9 @@
 import os
 import logging
+from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from scraper_real import get_facebook_info_real
+from scraper_improved import get_facebook_info_improved  # Đảm bảo import đúng
 
 # ========== CẤU HÌNH ==========
 logging.basicConfig(
@@ -20,18 +21,17 @@ if not TOKEN:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý lệnh /start"""
     help_text = """
-🤖 *Bot Check Facebook Info - REAL VERSION*
+🤖 *Bot Check Facebook Info - VERSION 2.0*
 
 *Cách sử dụng:*
-• Gửi *username* Facebook (ví dụ: `zuck`)
-• Hoặc *UID* (ví dụ: `1000`)
+• Gửi *username* Facebook (ví dụ: `facebook`)
 
-*Lưu ý quan trọng:*
-⚠️ Chỉ hoạt động với trang *công khai* (public)
-⚠️ Tốc độ phụ thuộc vào Facebook
-⚠️ Có thể không lấy được tất cả thông tin
+*Cải tiến mới:*
+⚡ Tốc độ nhanh hơn (5-10s)
+✅ Phát hiện verified chính xác hơn
+📅 Ước lượng năm tham gia dựa trên UID
 
-*Ví dụ:* `facebook` `cristiano` `taylor.swift`
+⚠️ *Lưu ý:* Chỉ hoạt động với trang *công khai*
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -42,33 +42,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"User {user_id} yêu cầu: {user_input}")
     
-    # Thông báo đang xử lý
     processing_msg = await update.message.reply_text(
-        f"🔍 *Đang thu thập thông tin cho:* `{user_input}`\n⏳ Vui lòng đợi 10-20 giây...",
+        f"🔍 *Đang thu thập:* `{user_input}`\n⏳ Vui lòng đợi 5-10 giây...",
         parse_mode='Markdown'
     )
     
     try:
-        # Gọi hàm thu thập THẬT
-        result = get_facebook_info_real(user_input)
+        result = get_facebook_info_improved(user_input)
         
-        # Kiểm tra kết quả
         if not result.get('success', False):
             error_msg = result.get('error', 'Lỗi không xác định')
             await update.message.reply_text(
-                f"❌ *Không thể lấy thông tin!*\n\n"
-                f"• **Username/UID:** `{user_input}`\n"
-                f"• **Lý do:** {error_msg}\n\n"
-                f"_Gợi ý:_\n1. Kiểm tra username có đúng không\n"
-                f"2. Trang có thể không công khai\n"
-                f"3. Thử lại sau vài phút",
+                f"❌ *Không thể lấy thông tin!*\n• **Lý do:** {error_msg}",
                 parse_mode='Markdown'
             )
             await processing_msg.delete()
             return
         
-      # ========== ĐỊNH DẠNG KẾT QUẢ CẢI TIẾN ==========
-result_text = f"""
+        # ĐỊNH DẠNG KẾT QUẢ
+        result_text = f"""
 📋 *THÔNG TIN FACEBOOK - THẬT*
 ━━━━━━━━━━━━━━━━━━━━
 👤 **Tên:** {result.get('name', 'Không xác định')}
@@ -84,14 +76,14 @@ result_text = f"""
 • 📅 **Tham gia:** {result.get('estimated_join_date', 'Không rõ')}
 • 🔗 {result.get('url', 'N/A')}
 • ⚡ Thu thập trong: {result.get('scraped_in', 'N/A')}
-• 🕒 Lúc: {result.get('timestamp', 'N/A')}
+• 🕒 Lúc: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 
 ━━━━━━━━━━━━━━━━━━━━
 ⚠️ *Thông tin từ dữ liệu CÔNG KHAI*
-📌 Ngày tham gia là ƯỚC LƯỢNG dựa trên UID
+📌 Ngày tham gia là ƯỚC LƯỢNG
 """
         
-        # Gửi ảnh đại diện nếu có
+        # Gửi ảnh nếu có
         avatar_url = result.get('avatar_url')
         if avatar_url and avatar_url.startswith('http'):
             try:
@@ -108,41 +100,27 @@ result_text = f"""
         await processing_msg.delete()
         
     except Exception as e:
-        logger.error(f"Lỗi xử lý: {e}", exc_info=True)
-        await update.message.reply_text(
-            "❌ *Lỗi hệ thống!*\n\nBot gặp sự cố khi xử lý yêu cầu. Vui lòng thử lại sau.",
-            parse_mode='Markdown'
-        )
+        logger.error(f"Lỗi: {e}", exc_info=True)
+        await update.message.reply_text("❌ Lỗi hệ thống! Thử lại sau.")
         await processing_msg.delete()
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xử lý lỗi toàn cục"""
-    logger.error(f"Lỗi: {context.error}", exc_info=True)
-    if update and update.message:
-        await update.message.reply_text("❌ Đã xảy ra lỗi hệ thống!")
+    logger.error(f"Lỗi toàn cục: {context.error}")
 
 # ========== HÀM CHÍNH ==========
 def main():
-    """Khởi chạy bot"""
     try:
-        # Tạo application
         app = Application.builder().token(TOKEN).build()
-        
-        # Đăng ký handlers
         app.add_handler(CommandHandler("start", start_command))
         app.add_handler(CommandHandler("help", start_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Error handler
         app.add_error_handler(error_handler)
         
-        # Khởi động
-        logger.info("🤖 Bot REAL đang khởi động...")
+        logger.info("🤖 Bot đang khởi động...")
         app.run_polling()
         
     except Exception as e:
         logger.error(f"Lỗi khởi động: {e}")
 
 if __name__ == '__main__':
-
     main()
